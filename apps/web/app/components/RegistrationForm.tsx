@@ -40,11 +40,11 @@ export default function RegistrationForm() {
       if (!active) return;
       setLoading(false);
       setExpanded(true);
-      if (e instanceof CheckoutError && e.status === 404) {
-        setProfile({ fields: {}, updatedAt: {} });
-      } else {
-        setErrorMsg("Failed to load profile.");
-      }
+      setErrorMsg(
+        e instanceof CheckoutError && e.status === 503
+          ? "The registration profile isn't available on this deployment."
+          : "Failed to load profile.",
+      );
     });
     return () => { active = false; };
   }, []);
@@ -67,7 +67,9 @@ export default function RegistrationForm() {
     for (const f of fields) {
       const current = values[f.name] || "";
       const original = profile?.fields?.[f.name] || "";
-      if (current !== original) {
+      // The API rejects empty values and has no per-field delete (use "Delete my
+      // data" for erasure), so a cleared field is simply not sent.
+      if (current !== "" && current !== original) {
         changedFields[f.name] = current;
       }
     }
@@ -85,9 +87,17 @@ export default function RegistrationForm() {
       setExpanded(false);
     } catch (err) {
       if (err instanceof CheckoutError && err.status === 422) {
-        const invalidFields = (err.details?.invalid_fields || err.details?.fields || err.details) as Record<string, string>;
-        setFieldErrors(invalidFields || {});
+        const raw = err.details.fields;
+        const invalidFields: Record<string, string> = {};
+        if (raw && typeof raw === "object") {
+          for (const [name, reason] of Object.entries(raw as Record<string, unknown>)) {
+            if (typeof reason === "string") invalidFields[name] = reason;
+          }
+        }
+        setFieldErrors(invalidFields);
         setErrorMsg("Please fix the errors below.");
+      } else if (err instanceof CheckoutError && err.status === 503) {
+        setErrorMsg("The registration profile isn't available on this deployment.");
       } else {
         setErrorMsg("Failed to save profile.");
       }

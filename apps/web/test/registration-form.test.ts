@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import RegistrationForm from "../app/components/RegistrationForm";
-import { api } from "../lib/api";
+import { api, CheckoutError } from "../lib/api";
 import { SEP9_NATURAL_PERSON_FIELDS } from "@checkout/core";
 
 vi.mock("../lib/api", () => {
@@ -80,5 +80,73 @@ describe("RegistrationForm", () => {
     expect(api.saveProfile).toHaveBeenCalledWith({ given_name: "Johnny" });
     
     root.unmount();
+  });
+
+  async function mountExpanded() {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(React.createElement(RegistrationForm));
+    });
+    const editBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Edit profile");
+    if (editBtn) await act(async () => { editBtn.click(); });
+  }
+
+  async function type(id: string, value: string) {
+    const input = container.querySelector(`[id="${id}"]`) as HTMLInputElement;
+    await act(async () => {
+      input.value = value;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  async function submit() {
+    await act(async () => {
+      container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
+
+  it("does not send a cleared field (the API rejects empty values)", async () => {
+    vi.mocked(api.getProfile).mockResolvedValue({
+      fields: { family_name: "Smith", given_name: "John" },
+      updatedAt: {},
+    });
+    vi.mocked(api.saveProfile).mockResolvedValue({ fields: {}, updatedAt: {} });
+    await mountExpanded();
+    await type("reg-given_name", "");
+    await type("reg-family_name", "Jones");
+    await submit();
+    expect(api.saveProfile).toHaveBeenCalledWith({ family_name: "Jones" });
+    root.unmount();
+  });
+
+  it("maps a 422 invalid_fields response onto the offending input", async () => {
+    vi.mocked(api.getProfile).mockResolvedValue({ fields: {}, updatedAt: {} });
+    vi.mocked(api.saveProfile).mockRejectedValue(
+      new CheckoutError("server_error", 422, "invalid_fields", undefined, {
+        fields: { given_name: "must be at most 64 characters" },
+      }),
+    );
+    await mountExpanded();
+    await type("reg-given_name", "x");
+    await submit();
+    expect(container.querySelector(`[id="reg-given_name"]`)!.getAttribute("aria-invalid")).toBe("true");
+    expect(container.textContent).toContain("must be at most 64 characters");
+    root.unmount();
+  });
+
+  it("shows an unavailable message when the profile store is not configured (503)", async () => {
+    vi.mocked(api.getProfile).mockRejectedValue(new CheckoutError("server_error", 503, "profile_unavailable"));
+    await mountExpanded();
+    expect(container.textContent).toContain("isn't available on this deployment");
+    root.unmount();
+  });
+});
+
+describe("toProfileView", () => {
+  it("maps the API's fields array into value and updatedAt maps", async () => {
+    const { toProfileView } = await vi.importActual<typeof import("../lib/api")>("../lib/api");
+    expect(
+      toProfileView({ fields: [{ field: "given_name", value: "Ada", source: "seller", updatedAt: 5 }] }),
+    ).toEqual({ fields: { given_name: "Ada" }, updatedAt: { given_name: 5 } });
   });
 });
