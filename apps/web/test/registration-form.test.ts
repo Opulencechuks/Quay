@@ -6,6 +6,8 @@ import RegistrationForm from "../app/components/RegistrationForm";
 import { api, CheckoutError } from "../lib/api";
 import { SEP9_NATURAL_PERSON_FIELDS } from "@checkout/core";
 
+(globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+
 vi.mock("../lib/api", () => {
   return {
     api: {
@@ -27,6 +29,21 @@ vi.mock("../lib/api", () => {
 describe("RegistrationForm", () => {
   let container: HTMLDivElement;
   let root: Root;
+
+  async function type(id: string, value: string) {
+    const input = container.querySelector(`[id="${id}"]`) as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+
+  async function submit() {
+    await act(async () => {
+      container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+  }
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -65,17 +82,10 @@ describe("RegistrationForm", () => {
     });
 
     // Modify a field
-    const givenNameInput = container.querySelector(`[id="reg-given_name"]`) as HTMLInputElement;
-    await act(async () => {
-      givenNameInput.value = "Johnny";
-      givenNameInput.dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    await type("reg-given_name", "Johnny");
 
     // Save
-    const form = container.querySelector("form");
-    await act(async () => {
-      form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
+    await submit();
 
     expect(api.saveProfile).toHaveBeenCalledWith({ given_name: "Johnny" });
     
@@ -89,20 +99,6 @@ describe("RegistrationForm", () => {
     });
     const editBtn = Array.from(container.querySelectorAll("button")).find(b => b.textContent === "Edit profile");
     if (editBtn) await act(async () => { editBtn.click(); });
-  }
-
-  async function type(id: string, value: string) {
-    const input = container.querySelector(`[id="${id}"]`) as HTMLInputElement;
-    await act(async () => {
-      input.value = value;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-  }
-
-  async function submit() {
-    await act(async () => {
-      container.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-    });
   }
 
   it("does not send a cleared field (the API rejects empty values)", async () => {
